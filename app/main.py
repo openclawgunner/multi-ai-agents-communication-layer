@@ -6,6 +6,18 @@ from fastapi import FastAPI, Header, HTTPException, Depends
 from pydantic import BaseModel
 from app.bridge import TelegramBridge
 
+# Firestore integration
+try:
+    from google.cloud import firestore
+    # Initialize Firestore Client
+    db = firestore.Client()
+    missions_ref = db.collection("minds_missions")
+    HAS_FIRESTORE = True
+except Exception as e:
+    print(f"Firestore not configured, falling back to mock: {e}")
+    HAS_FIRESTORE = False
+    active_missions = {}
+
 app = FastAPI(title="Minds Gateway - AI Agent Communication Layer")
 
 # Initialize Telegram Bridge
@@ -48,23 +60,32 @@ async def root():
 @app.post("/missions/dispatch", response_model=Mission)
 async def dispatch_mission(mission: Mission, auth: str = Depends(verify_api_key)):
     """Gunner014 or Victor assigns a task to a Mind."""
-    active_missions[mission.id] = mission
+    
+    if HAS_FIRESTORE:
+        missions_ref.document(mission.id).set(mission.model_dump())
+    else:
+        active_missions[mission.id] = mission
     
     # Announce the mission in the group for human visibility
     tg_bridge.announce_mission(mission.id, mission.sender, mission.target, mission.task)
     
-    # TODO: In Phase 2, we can also send a direct notification to the Mind via its specific endpoint
     return mission
 
 @app.post("/missions/callback")
 async def mission_callback(response: MissionResponse, auth: str = Depends(verify_api_key)):
     """A Mind reports its results back to the Gateway."""
-    if response.mission_id not in active_missions:
-        raise HTTPException(status_code=404, detail="Mission ID not found")
     
-    # Update mission status
-    mission = active_missions[response.mission_id]
-    mission.status = "completed"
+    if HAS_FIRESTORE:
+        doc_ref = missions_ref.document(response.mission_id)
+        doc = doc_ref.get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="Mission ID not found")
+        doc_ref.update({"status": "completed", "result": response.result})
+    else:
+        if response.mission_id not in active_missions:
+            raise HTTPException(status_code=404, detail="Mission ID not found")
+        mission = active_missions[response.mission_id]
+        mission.status = "completed"
     
     # Announce the completion in the group for human visibility
     tg_bridge.announce_completion(response.mission_id, response.responder, response.result)
@@ -74,9 +95,15 @@ async def mission_callback(response: MissionResponse, auth: str = Depends(verify
 @app.get("/missions/status/{mission_id}")
 async def get_mission_status(mission_id: str):
     """Check the progress of a delegated task."""
-    if mission_id not in active_missions:
-        raise HTTPException(status_code=404, detail="Mission ID not found")
-    return active_missions[mission_id]
+    if HAS_FIRESTORE:
+        doc = missions_ref.document(mission_id).get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="Mission ID not found")
+        return doc.to_dict()
+    else:
+        if mission_id not in active_missions:
+            raise HTTPException(status_code=404, detail="Mission ID not found")
+        return active_missions[mission_id]
 
 if __name__ == "__main__":
     import uvicorn
