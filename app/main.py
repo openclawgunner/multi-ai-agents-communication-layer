@@ -28,12 +28,12 @@ def log_mission_event(mission_id: str, event_type: str, content: str):
 # Firestore integration
 try:
     from google.cloud import firestore
-    # Initialize Firestore Client
-    db = firestore.Client()
+    # Initialize Firestore Client pointing to the dedicated database
+    db = firestore.Client(database="agents-comms")
     missions_ref = db.collection("minds_missions")
     HAS_FIRESTORE = True
 except Exception as e:
-    print(f"Firestore not configured, falling back to mock: {e}")
+    print(f"Firestore (agents-comms) not configured, falling back to mock: {e}")
     HAS_FIRESTORE = False
     active_missions = {}
 
