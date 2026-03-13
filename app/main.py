@@ -1,10 +1,16 @@
-from fastapi import FastAPI, Header, HTTPException, Depends
-from pydantic import BaseModel
-from typing import List, Optional
+import os
 import uuid
 import time
+from typing import List, Optional
+from fastapi import FastAPI, Header, HTTPException, Depends
+from pydantic import BaseModel
+from app.bridge import TelegramBridge
 
 app = FastAPI(title="Minds Gateway - AI Agent Communication Layer")
+
+# Initialize Telegram Bridge
+# We'll need these env vars set: TELEGRAM_BOT_TOKEN, TELEGRAM_GROUP_CHAT_ID
+tg_bridge = TelegramBridge()
 
 # --- Schemas ---
 class Mission(BaseModel):
@@ -43,7 +49,11 @@ async def root():
 async def dispatch_mission(mission: Mission, auth: str = Depends(verify_api_key)):
     """Gunner014 or Victor assigns a task to a Mind."""
     active_missions[mission.id] = mission
-    # TODO: Trigger outbound communication (Telegram/Minds API)
+    
+    # Announce the mission in the group for human visibility
+    tg_bridge.announce_mission(mission.id, mission.sender, mission.target, mission.task)
+    
+    # TODO: In Phase 2, we can also send a direct notification to the Mind via its specific endpoint
     return mission
 
 @app.post("/missions/callback")
@@ -52,10 +62,13 @@ async def mission_callback(response: MissionResponse, auth: str = Depends(verify
     if response.mission_id not in active_missions:
         raise HTTPException(status_code=404, detail="Mission ID not found")
     
-    # Update mission status and store result
+    # Update mission status
     mission = active_missions[response.mission_id]
     mission.status = "completed"
-    # TODO: Log result to Transparency Dashboard / Firestore
+    
+    # Announce the completion in the group for human visibility
+    tg_bridge.announce_completion(response.mission_id, response.responder, response.result)
+    
     return {"status": "success", "message": f"Result received for mission {response.mission_id}"}
 
 @app.get("/missions/status/{mission_id}")
