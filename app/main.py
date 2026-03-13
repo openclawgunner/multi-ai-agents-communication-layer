@@ -1,10 +1,29 @@
 import os
 import uuid
 import time
+from datetime import datetime
 from typing import List, Optional
 from fastapi import FastAPI, Header, HTTPException, Depends
 from pydantic import BaseModel
 from app.bridge import TelegramBridge
+
+# Create logs directory
+LOG_DIR = os.path.join(os.getcwd(), "logs", "missions")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+def log_mission_event(mission_id: str, event_type: str, content: str):
+    """Saves a human-readable markdown log of the mission conversation."""
+    filename = f"MISSION_{mission_id}.md"
+    filepath = os.path.join(LOG_DIR, filename)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    with open(filepath, "a") as f:
+        if event_type == "dispatch":
+            f.write(f"# Mission Log: {mission_id}\n\n")
+            f.write(f"### [ {timestamp} ] DISPATCHED\n")
+        else:
+            f.write(f"\n### [ {timestamp} ] {event_type.upper()}\n")
+        f.write(f"{content}\n---\n")
 
 # Firestore integration
 try:
@@ -66,6 +85,10 @@ async def dispatch_mission(mission: Mission, auth: str = Depends(verify_api_key)
     else:
         active_missions[mission.id] = mission
     
+    # Log the mission narrative locally
+    dispatch_msg = f"**Sender:** {mission.sender}\n**Target:** {mission.target}\n**Task:** {mission.task}"
+    log_mission_event(mission.id, "dispatch", dispatch_msg)
+    
     # Announce the mission in the group for human visibility
     tg_bridge.announce_mission(mission.id, mission.sender, mission.target, mission.task)
     
@@ -86,6 +109,10 @@ async def mission_callback(response: MissionResponse, auth: str = Depends(verify
             raise HTTPException(status_code=404, detail="Mission ID not found")
         mission = active_missions[response.mission_id]
         mission.status = "completed"
+    
+    # Log the result narrative locally
+    callback_msg = f"**Responder:** {response.responder}\n**Result:** {response.result}"
+    log_mission_event(response.mission_id, "callback", callback_msg)
     
     # Announce the completion in the group for human visibility
     tg_bridge.announce_completion(response.mission_id, response.responder, response.result)
