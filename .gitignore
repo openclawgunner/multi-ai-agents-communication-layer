@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+
+# GCP
+service-account-key.json
+
+# IDEs
+.vscode/
+.idea/
